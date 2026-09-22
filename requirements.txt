@@ -1,0 +1,12 @@
+# Python 3.11 baseline for the planned Python reproduction.
+# These ranges are not a tested lockfile or the authors' original environment.
+numpy>=1.26,<3
+scipy>=1.11,<2
+Pillow>=10,<13
+scikit-learn>=1.4,<2
+PyWavelets>=1.5,<2
+matplotlib>=3.8,<4
+torch>=2.2,<3
+torchvision>=0.17,<1
+# Let pip resolve a compatible torch/torchvision pair. Select a GPU build
+# separately using the official PyTorch instructions for the target machine.

@@ -1,0 +1,35 @@
+# Raw datasets and generated experiment artifacts
+/data/
+/outputs/
+/checkpoints/
+/features/
+/tmp/
+/third_party/
+
+# Python environments and caches
+/.venv/
+/venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+*.egg-info/
+/build/
+/dist/
+
+# Local configuration and operating-system metadata
+.env
+.env.*
+!.env.example
+/.idea/
+/.vscode/
+.DS_Store
+._*
+__MACOSX/
+Thumbs.db
+Desktop.ini
+*.log
