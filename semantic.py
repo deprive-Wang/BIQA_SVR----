@@ -23,6 +23,15 @@ WEIGHT_TRANSFORM = SqueezeNet1_1_Weights.IMAGENET1K_V1.transforms()
 NORMALIZE_MEAN = torch.tensor(WEIGHT_TRANSFORM.mean)[:, None, None]
 NORMALIZE_STD = torch.tensor(WEIGHT_TRANSFORM.std)[:, None, None]
 
+# SqueezeNet 输入前的图像预处理
+'''
+原图 RGB 数组 (H, W, 3)，uint8，像素值 0～255
+从中心裁出 (227, 227, 3)
+permute(2, 0, 1) 变成 (3, 227, 227)
+转 float 并除以 255，像素值变成 0～1
+每个颜色通道分别减 mean、除 std
+返回 PyTorch Tensor (3, 227, 227)
+'''
 
 def prepare_rgb(rgb: np.ndarray) -> torch.Tensor:
     """Center-crop RGB uint8 to 227 square and apply weight-specific normalization.
@@ -45,7 +54,7 @@ def prepare_rgb(rgb: np.ndarray) -> torch.Tensor:
     # mean/std 按通道广播；这是 torchvision 权重的预处理，未核验与作者权重等价。
     return (tensor - NORMALIZE_MEAN) / NORMALIZE_STD
 
-
+# 加载并验证 SqueezeNet 模型权重
 def _load_verified_model(weights_path: Path) -> nn.Module:
     # Verify bytes before deserializing; never silently fall back to random weights.
     with weights_path.open('rb') as stream:
@@ -58,7 +67,7 @@ def _load_verified_model(weights_path: Path) -> nn.Module:
     model.load_state_dict(state, strict=True)
     return model
 
-
+# 定义一个类，封装 SqueezeNet 模型，提供特征提取和元数据查询功能
 class SemanticExtractor:
     """Frozen SqueezeNet v1.1; returns pooled activations, without softmax."""
 
@@ -79,6 +88,15 @@ class SemanticExtractor:
         self.model.eval()
         self.model.requires_grad_(False)
 
+    # 提取图像特征
+    '''
+    B 张 RGB 数组，原图尺寸可以不同
+    → prepare_rgb()：每张变成 (3,227,227)
+    → torch.stack()：合成 (B,3,227,227)
+    → 移到 CPU 或 GPU
+    → SqueezeNet：得到 (B,1000)
+    → 移回 CPU，转 NumPy 数组返回
+    '''
     def extract(self, images: Sequence[np.ndarray]) -> np.ndarray:
         """Return float32 (B,1000) features for a nonempty batch of RGB arrays."""
         if len(images) == 0:
@@ -104,6 +122,8 @@ class SemanticExtractor:
             raise RuntimeError('Expected finite SqueezeNet features of shape (B,1000)')
         return result
 
+
+    # 查询模型元数据，记录版本、架构、权重、预处理、输出、维度、评估模式、梯度、设备、dtype、cudnn、MATLAB 等价
     def metadata(self) -> dict:
         """Document the reproducible Python variant and its MATLAB boundary."""
         return {

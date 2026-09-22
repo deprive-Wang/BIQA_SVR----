@@ -14,7 +14,7 @@ from livec import DEFAULT_ROOT, LivecSample, load_livec
 from low_level import FEATURE_NAMES, LowLevelConfig
 from semantic import DEFAULT_WEIGHTS, SEMANTIC_NAMES, SemanticExtractor
 
-
+# 缓存检查，确定当前低级特征与高级特征是否一致
 def read_low_level_cache(
     path: Path, samples: Sequence[LivecSample],
 ) -> tuple[dict[str, np.ndarray], dict]:
@@ -68,7 +68,7 @@ def read_low_level_cache(
         raise ValueError('Low-level cache source hashes differ; regenerate the cache')
     return data, metadata
 
-
+# 用同一批图像提取 1000 维语义特征，与已有的 7 维低层特征按行拼接，保存成 (N,1007) 的缓存
 def run_extraction(
     root: Path, low_level_path: Path, output: Path, *, weights: Path = DEFAULT_WEIGHTS,
     batch_size: int = 16, device: str = 'cuda', limit: int | None = None,

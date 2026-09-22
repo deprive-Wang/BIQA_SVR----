@@ -36,7 +36,12 @@ PARAMETER_GRID = {
     'svr__epsilon': [0.1, 1.0],
 }
 
-
+    '''
+    工作流
+    输入特征 X，形状 (N,D)
+    → scale：StandardScaler 按特征列做标准化，形状仍是 (N,D)
+    → svr：RBF 核 SVR，输出预测分数 (N,)
+    '''
 def make_pipeline() -> Pipeline:
     """Single source of truth for the estimator and the defaults recorded in config."""
     # 各列的量纲不同，需要训练集均值/标准差。放在 Pipeline 内保证每个 CV 训练折
@@ -45,6 +50,7 @@ def make_pipeline() -> Pipeline:
                      ('svr', SVR(kernel='rbf', cache_size=256))])
 
 
+# 训练之前再检查一次
 def load_training_cache(path: Path, root: Path) -> dict[str, np.ndarray]:
     """Validate the full combined cache against current annotations and code."""
     with np.load(path, allow_pickle=False) as archive:
@@ -99,12 +105,15 @@ def load_training_cache(path: Path, root: Path) -> dict[str, np.ndarray]:
                              'verify or regenerate the feature cache')
     return data
 
-
+'''
+输入：整份特征（1162，1007）和评分
+输出：训练后的模型、文字报告、测试集预测数组
+先按同一组索引切分 X 和 MOS；交叉验证与标准化都限制在训练集；最后才碰测试集。
+'''
 def train_one_split(
     features: np.ndarray, mos: np.ndarray, *, seed: int,
     parameter_grid: dict | None = None, cv_folds: int = 3, jobs: int = 1,
 ) -> tuple[Pipeline, dict, dict[str, np.ndarray]]:
-    """输入 X=(N,D)、MOS=(N,)；返回模型、指标报告和测试集预测。"""
     if (features.ndim != 2 or mos.shape != (len(features),)
             or not np.isfinite(features).all() or not np.isfinite(mos).all()):
         raise ValueError('Expected finite (N,D) features and (N,) MOS')

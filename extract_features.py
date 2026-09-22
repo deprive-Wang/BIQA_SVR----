@@ -15,6 +15,7 @@ from livec import DEFAULT_ROOT, load_livec
 from low_level import FEATURE_NAMES, LowLevelConfig, extract_low_level
 
 
+# 逐张读取 LIVEC 图像，算出每张图的 7 维低层特征，再连同图像名、MOS 等信息保存为一个 .npz 文件
 def main() -> None:
     """Write an auditable NPZ cache; refuse to overwrite an existing result."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -22,6 +23,9 @@ def main() -> None:
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--limit', type=int, help='Debug subset only; omitted means all images')
     args = parser.parse_args()
+
+    # 数据校对，若异常则抛出
+
     if args.limit is not None and not 1 <= args.limit <= 1162:
         parser.error('--limit must be between 1 and 1162')
     if args.output.suffix != '.npz':
@@ -30,10 +34,13 @@ def main() -> None:
         parser.error(f'Output already exists: {args.output}')
     if args.output.resolve().is_relative_to(args.root.resolve()):
         parser.error('Output must be outside the raw dataset directory')
-    # Each retained image is fully decoded below; avoid decoding twice.
+
+    # 只解码一次，下面提取特征
+
     samples = load_livec(args.root, verify_images=False)
     samples = samples[:args.limit] if args.limit else samples
     config = LowLevelConfig()
+
     # 按 MAT 标注顺序逐图提取，features[i]、MOS[i]、图像哈希始终描述同一张图。
     features, hashes = [], []
     for index, sample in enumerate(samples, 1):
@@ -52,6 +59,8 @@ def main() -> None:
         if index == 1 or index % 25 == 0 or index == len(samples):
             print(f'Extracted {index}/{len(samples)}', flush=True)
     code_root = Path(__file__).resolve().parent
+
+
     # 以下是复现追溯信息，不属于论文特征。源码按完整字节计算哈希：改注释也会变化。
     metadata = {
         'config': config.metadata(),
@@ -65,6 +74,8 @@ def main() -> None:
             for name in ('low_level.py', 'livec.py', 'extract_features.py')
         },
     }
+
+    # 写入npz文件
     args.output.parent.mkdir(parents=True, exist_ok=True)
     # Exclusive creation protects existing runs, including concurrent writers.
     with args.output.open('xb') as stream:

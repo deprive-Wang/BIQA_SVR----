@@ -21,7 +21,7 @@ FEATURE_NAMES = (
 )
 EXTRACTOR_VERSION = 'bcqi-low-level-v1'
 
-
+# 定义低级特征的参数并进行校对和说明
 @dataclass(frozen=True)
 class LowLevelConfig:
     """Project defaults, not author-confirmed implementation parameters."""
@@ -66,7 +66,7 @@ class LowLevelConfig:
             'degenerate': 'constant noise=0; zero MSCN alpha=2,beta=0',
         }
 
-
+# 用一组局部 DCT 滤波器扫描灰度图，对每种滤波响应分别计算方差和峰度。
 def _dct_moments(gray: np.ndarray, size: int) -> tuple[np.ndarray, np.ndarray]:
     # 论文式 (8)：把二维 DCT 基作为空间滤波器，统计各响应的方差和峰度。
     # 二维基可分离为两次一维相关；size=7 时共有 49 个基，去掉 DC 后剩 48 个。
@@ -92,9 +92,10 @@ def _dct_moments(gray: np.ndarray, size: int) -> tuple[np.ndarray, np.ndarray]:
             # Pearson 峰度为四阶中心矩 / 方差平方，高斯分布对应 3 而不是 0。
             kurtoses.append(float((squared * squared).mean() / variance**2)
                             if variance > 1e-20 else 3.0)
+    # 返回所有滤波响应的方差和峰度，下一步交给fit来计算
     return np.array(variances), np.array(kurtoses)
 
-
+# 输入48个滤波响应的方差和峰度，输出噪声方差v，v为局部最优解，数学公式对应论文
 def _fit_noise(variances: np.ndarray, kurtoses: np.ndarray, grid_size: int) -> float:
     # 论文式 (7)-(8)：假设干净图像的各滤波响应具有共同峰度，反推噪声方差 v。
     # 令 v < min(variances)，保证估计的干净响应方差 variance_i-v 为正。
@@ -132,8 +133,8 @@ def _fit_noise(variances: np.ndarray, kurtoses: np.ndarray, grid_size: int) -> f
     return min(candidates)[1] * upper  # 返回方差 sigma_n^2，不取平方根。
 
 
+# 讲MSCN系数拟合为广义高斯分别（GGD），返回两个数值：alpha描述MSCN数值分布的形状，beta描述MSCN数值分布的尺度
 def _ggd_parameters(values: np.ndarray, config: LowLevelConfig) -> tuple[float, float]:
-    # 论文式 (15)-(16)：零均值 GGD 的矩匹配。alpha 控制形状，beta 控制尺度。
     # 比值 (E[|X|])^2 / E[X^2] 消去 beta，只与 alpha 有关。
     second = float(np.mean(values**2))
     if second <= 1e-20:
@@ -154,7 +155,7 @@ def _ggd_parameters(values: np.ndarray, config: LowLevelConfig) -> tuple[float, 
     beta = np.sqrt(second * np.exp(gammaln(1 / alpha) - gammaln(3 / alpha)))
     return alpha, float(beta)
 
-
+# 输入RGB图像，输出7维低层特征，综合使用上述函数，提供统一入口
 def extract_low_level(
     rgb: np.ndarray, config: LowLevelConfig = LowLevelConfig(),
 ) -> np.ndarray:
@@ -170,11 +171,10 @@ def extract_low_level(
     if min(rgb.shape[:2]) < max(72, config.dct_size + 1):
         raise ValueError('Image is too small for three wavelet levels and DCT')
     # 低层分支使用原图 (H,W,3)，先转浮点防止 uint8 运算溢出。
-    # 式 (3)-(4)：只计算 HSI 中需要的 I、S 通道，无需计算色相 H。
+    # 式 (3)-(4)：只计算亮度和饱和度的均值，输出两个标量。
     pixels = rgb.astype(np.float64)
     total = pixels.sum(axis=2)  # 沿 RGB 通道求和，(H,W,3) -> (H,W)。
     intensity = total / (3 * 255)
-    # Seed with 1 so black pixels, where saturation is undefined, become 0.
     ratio = np.ones_like(total)
     np.divide(3 * pixels.min(axis=2), total, out=ratio, where=total > 0)
     saturation = 1 - ratio
@@ -199,7 +199,7 @@ def extract_low_level(
     for weight, bands in zip((1 / 7, 2 / 7, 4 / 7), coefficients[1:]):
         energies = [np.log10(1 + np.mean(band**2)) for band in bands]
         sharpness += weight * np.dot((0.1, 0.1, 0.8), energies)
-
+    # 计算自然度的两个参数，alpha和beta
     def smooth(values: np.ndarray) -> np.ndarray:
         return gaussian_filter(values, sigma=config.gaussian_sigma,
                                radius=config.gaussian_radius, mode='reflect')
@@ -216,3 +216,4 @@ def extract_low_level(
     if not np.isfinite(features).all():
         raise RuntimeError('Non-finite low-level features')
     return features
+# features顺序：[平均亮度, 平均饱和度, 对比度, 噪声, 锐度, alpha, beta]

@@ -11,12 +11,15 @@ from PIL import Image
 from scipy.io import loadmat      #读mat文件
 
 
+
+# 主要用于预先核查LIVEC数据集的完整性和正确性，确保图像文件、MOS评分和标准差等信息与官方发布一致。
+
 DEFAULT_ROOT = Path(__file__).resolve().parent / 'data' / 'ChallengeDB_release'
 # trainingImages 是主观实验的练习图，不是供 SVR 使用的训练集。
 PRACTICE_NAMES = frozenset(f't{index}.bmp' for index in range(1, 8))   #frozenset() 函数创建一个不可变的集合，可哈希化
 IMAGE_SUFFIXES = {'.bmp', '.jpg', '.jpeg', '.png', '.tif', '.tiff'}
 
-
+# 定义一个数据类，用于存储每张 LIVEC 图像的样本信息。后续list[LivecSample] 用于存储所有样本。
 @dataclass(frozen=True)
 class LivecSample:
     """A scored image in the original MAT ordering."""
@@ -27,7 +30,7 @@ class LivecSample:
     stddev: float  # 主观评分的分散程度；当前训练不把它作为特征或权重。
     annotation_index: int  # 保留原始 1169 项标注中的位置，便于追溯对齐。
 
-
+# 定义最小load函数，用于读取 LIVEC 数据集中的向量变量。
 def _read_vector(root: Path, variable: str) -> np.ndarray:
     
     path = root / 'Data' / f'{variable}.mat'
@@ -59,6 +62,9 @@ def load_livec(
     raw_names = _read_vector(root, 'AllImages_release')
     mos = _read_vector(root, 'AllMOS_release')
     stddev = _read_vector(root, 'AllStdDev_release')
+
+    # 检查标注是否完整，若不完整则抛出异常。
+
     if not (len(raw_names) == len(mos) == len(stddev) == 1169):
         raise ValueError('Expected 1169 aligned names, MOS values and deviations')
     names = []
@@ -83,6 +89,8 @@ def load_livec(
         raise ValueError('MOS must be within the LIVE Challenge scale [0, 100]')
     if (stddev < 0).any():
         raise ValueError('Standard deviations must be nonnegative')
+
+    # 检查图像文件是否完整，若不完整则抛出异常。
 
     image_root = root / 'Images'
     if not image_root.is_dir():
