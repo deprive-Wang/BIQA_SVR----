@@ -1,5 +1,5 @@
-# Python 3.11 baseline for the planned Python reproduction.
-# These ranges are not a tested lockfile or the authors' original environment.
+# 本项目 Python 复现以 Python 3.11 为基础。
+# 以下版本范围不是经验证的锁定版本，也不是作者原始环境。
 numpy>=1.26,<3
 scipy>=1.11,<2
 Pillow>=10,<13
@@ -8,5 +8,5 @@ PyWavelets>=1.5,<2
 matplotlib>=3.8,<4
 torch>=2.2,<3
 torchvision>=0.17,<1
-# Let pip resolve a compatible torch/torchvision pair. Select a GPU build
-# separately using the official PyTorch instructions for the target machine.
+# 由 pip 解析兼容的 torch/torchvision 版本组合。
+# GPU 构建需按目标机器情况，参照 PyTorch 官方说明另行选择。

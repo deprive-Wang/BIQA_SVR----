@@ -1,4 +1,4 @@
-"""Validate an existing low-level cache, extract semantics and save 1007-D features."""
+"""核验低层缓存，提取语义特征并保存 1007 维拼接特征。"""
 
 import argparse
 import hashlib
@@ -18,7 +18,7 @@ from semantic import DEFAULT_WEIGHTS, SEMANTIC_NAMES, SemanticExtractor
 def read_low_level_cache(
     path: Path, samples: Sequence[LivecSample],
 ) -> tuple[dict[str, np.ndarray], dict]:
-    """Reject stale, reordered, partial or incompatible low-level caches."""
+    """拒绝过期、顺序错乱、不完整或配置不兼容的低层缓存。"""
     with np.load(path, allow_pickle=False) as archive:
         required = {
             'features', 'names', 'mos', 'stddev', 'annotation_indices',
@@ -73,7 +73,7 @@ def run_extraction(
     root: Path, low_level_path: Path, output: Path, *, weights: Path = DEFAULT_WEIGHTS,
     batch_size: int = 16, device: str = 'cuda', limit: int | None = None,
 ) -> None:
-    """Extract and merge by verified IDs and image bytes; never overwrite results."""
+    """核对图像 ID 与内容后提取并拼接特征，不覆盖已有结果。"""
     if type(batch_size) is not int or batch_size <= 0:
         raise ValueError('batch_size must be a positive integer')
     if limit is not None and (type(limit) is not int or not 1 <= limit <= 1162):
@@ -84,11 +84,15 @@ def run_extraction(
         raise ValueError(f'Output already exists: {output}')
     if output.resolve().is_relative_to(root.resolve()):
         raise ValueError('Output must be outside the raw dataset directory')
+
+    # 取得图像列表，核对底层特征缓存
     samples = load_livec(root, verify_images=False)
     # 先检查完整低层缓存，再截取调试子集，防止用不完整缓存替代正式数据。
     low, low_metadata = read_low_level_cache(low_level_path, samples)
     if limit is not None:
         samples = samples[:limit]
+
+    # 使用预训练模型提取高维语义特征，确保图像内容与低层缓存相对应
     extractor = SemanticExtractor(weights, device=device)
     extractor_metadata = extractor.metadata()
     print(f"Device: {device}; {extractor_metadata.get('device_name', device)}; "
@@ -119,6 +123,8 @@ def run_extraction(
     # 论文 II-A / 表 I：沿特征轴拼接 (N,7)+(N,1000) -> (N,1007)。
     # 每一行对应一张图；前 7 列是低层属性，后 1000 列是高层语义。
     features = np.concatenate((low['features'][:count], high), axis=1)
+
+    # 记
     metadata = {
         'sample_count': count, 'debug_subset': count != 1162,
         'low_level': low_metadata, 'semantic': extractor_metadata,
@@ -150,7 +156,7 @@ def run_extraction(
 
 
 def main() -> None:
-    """Extract pooled activations using local, verified pretrained weights."""
+    """使用本地已校验的预训练权重提取池化后的激活特征。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=DEFAULT_ROOT)
     parser.add_argument('--low-level', type=Path,

@@ -1,4 +1,4 @@
-"""Read and validate the official LIVE Challenge release without changing it."""
+"""读取并校验官方 LIVE Challenge 数据包，不修改原始数据。"""
 
 import argparse
 import json
@@ -22,7 +22,7 @@ IMAGE_SUFFIXES = {'.bmp', '.jpg', '.jpeg', '.png', '.tif', '.tiff'}
 # 定义一个数据类，用于存储每张 LIVEC 图像的样本信息。后续list[LivecSample] 用于存储所有样本。
 @dataclass(frozen=True)
 class LivecSample:
-    """A scored image in the original MAT ordering."""
+    """按 MAT 原始顺序保存的一张已评分图像。"""
 
     name: str
     path: Path
@@ -52,10 +52,10 @@ def load_livec(
     *,
     verify_images: bool = True,
 ) -> tuple[LivecSample, ...]:
-    """Load 1162 scored images, excluding the seven observer practice images.
+    """读取 1162 张正式评分图像，排除 7 张受试者练习图。
 
-    Strictly checks release size, names, scores and file coverage. By default,
-    fully decodes every retained image; turning that off only skips decoding.
+    严格检查标注数量、文件名、评分和图像覆盖情况。默认完整解码每张保留的
+    图像；关闭 verify_images 只会跳过解码检查。
     """
     root = Path(root).resolve()
     # 三个向量按同一索引对应，不能分别对文件名或 MOS 排序。
@@ -69,12 +69,13 @@ def load_livec(
         raise ValueError('Expected 1169 aligned names, MOS values and deviations')
     names = []
     for entry in raw_names:
+        # mat中一开始提取出来的是np.ndarray
         if not isinstance(entry, np.ndarray) or entry.size != 1:
             raise ValueError('Each image-name cell must contain one string')
-        value = entry.item()
+        value = entry.item() # 从 numpy 数组中提取唯一元素，返回str值。
         if not isinstance(value, str) or not value:
             raise ValueError('Image names must be nonempty strings')
-        # Release names are basenames; reject paths before joining the root.
+        # 标注应只包含文件名；拼接数据目录前拒绝路径形式的名称。
         if any(character in value for character in '/\\:') or value in {'.', '..'}:
             raise ValueError(f'Invalid image basename: {value!r}')
         names.append(value)
@@ -126,7 +127,7 @@ def load_livec(
 
 
 def main() -> None:
-    """Validate a release and print a compact JSON summary."""
+    """校验数据包并打印简明的 JSON 摘要。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=DEFAULT_ROOT)
     args = parser.parse_args()

@@ -1,4 +1,4 @@
-# Raw datasets and generated experiment artifacts
+# 原始数据集与生成的实验产物
 /data/
 /outputs/
 /checkpoints/
@@ -6,7 +6,7 @@
 /tmp/
 /third_party/
 
-# Python environments and caches
+# Python 环境与缓存
 /.venv/
 /venv/
 __pycache__/
@@ -21,7 +21,7 @@ htmlcov/
 /build/
 /dist/
 
-# Local configuration and operating-system metadata
+# 本地配置与操作系统元数据
 .env
 .env.*
 !.env.example

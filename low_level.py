@@ -1,16 +1,16 @@
-"""BCQI equations (3)-(16): six low-level properties, seven features.
+"""实现 BCQI 式 (3)～(16)：六类低层属性，共七维特征。
 
-Python reproduction, not the authors' code. Numerical choices not specified
-by BCQI are explicit in LowLevelConfig and README.md.
+这是 Python 复现，并非作者源码。论文未明确的数值选择记录在
+LowLevelConfig 和 README.md 中。
 """
 
 from dataclasses import asdict, dataclass
 
 import numpy as np
-import pywt
-from scipy.ndimage import correlate1d, gaussian_filter
-from scipy.optimize import minimize_scalar
-from scipy.special import gammaln, rel_entr
+import pywt # 用于小波变换
+from scipy.ndimage import correlate1d, gaussian_filter # 用于计算对比度和锐度
+from scipy.optimize import minimize_scalar # 用于优化 alpha、beta
+from scipy.special import gammaln, rel_entr # 用于计算自然度的 alpha、beta 分布
 
 
 # 论文 II-B / 表 I：六类属性、七个数值；自然度由 alpha、beta 两维表示。
@@ -24,7 +24,7 @@ EXTRACTOR_VERSION = 'bcqi-low-level-v1'
 # 定义低级特征的参数并进行校对和说明
 @dataclass(frozen=True)
 class LowLevelConfig:
-    """Project defaults, not author-confirmed implementation parameters."""
+    """本项目的默认配置，并非已核验的作者实现参数。"""
 
     # 以下是本项目的数值选择，不能视为已经核验的作者代码参数。
     dct_size: int = 7
@@ -49,7 +49,7 @@ class LowLevelConfig:
             raise ValueError('Invalid Gaussian sigma or GGD shape bounds')
 
     def metadata(self) -> dict:
-        """Return all numerical conventions needed to identify a cache."""
+        """返回识别特征缓存所需的数值计算约定。"""
         return {
             **asdict(self), 'version': EXTRACTOR_VERSION,
             'input': 'RGB uint8; no resize, EXIF transpose or ICC conversion',
@@ -66,15 +66,23 @@ class LowLevelConfig:
             'degenerate': 'constant noise=0; zero MSCN alpha=2,beta=0',
         }
 
-# 用一组局部 DCT 滤波器扫描灰度图，对每种滤波响应分别计算方差和峰度。
+# 用 48 个不同的 DCT 滤波器扫描灰度图，分别统计每种滤波响应的方差和峰度，供后续噪声估计使用
+# 灰度图 → 滤波响应 → 方差与峰度
 def _dct_moments(gray: np.ndarray, size: int) -> tuple[np.ndarray, np.ndarray]:
-    # 论文式 (8)：把二维 DCT 基作为空间滤波器，统计各响应的方差和峰度。
     # 二维基可分离为两次一维相关；size=7 时共有 49 个基，去掉 DC 后剩 48 个。
+    
+    # 根据DCT基的定义来计算
     positions = np.arange(size) + 0.5
     basis = np.sqrt(2 / size) * np.cos(
         np.pi * np.arange(size)[:, None] * positions / size
     )
     basis[0] /= np.sqrt(2)
+
+    '''
+    gray (H, W)
+    └─ 沿 axis=0（高度方向）滤波 → vertical (H, W)
+       └─ 沿 axis=1（宽度方向）滤波 → response (H, W)
+    '''
     margin = size // 2
     variances, kurtoses = [], []
     for row in range(size):
@@ -85,27 +93,36 @@ def _dct_moments(gray: np.ndarray, size: int) -> tuple[np.ndarray, np.ndarray]:
             response = correlate1d(vertical, basis[column], axis=1)
             # 去掉依赖边界延拓的位置，只统计完整滤波窗口内的 valid 响应。
             response = response[margin:-margin, margin:-margin]
+
+            # 计算方差
             centered = response - response.mean()
             squared = centered * centered
             variance = float(squared.mean())
             variances.append(variance)
             # Pearson 峰度为四阶中心矩 / 方差平方，高斯分布对应 3 而不是 0。
+            
+            #计算峰度
             kurtoses.append(float((squared * squared).mean() / variance**2)
                             if variance > 1e-20 else 3.0)
-    # 返回所有滤波响应的方差和峰度，下一步交给fit来计算
+            
+    # 返回48个不同滤波响应的方差和峰度，下一步交给fit来计算
     return np.array(variances), np.array(kurtoses)
 
 # 输入48个滤波响应的方差和峰度，输出噪声方差v，v为局部最优解，数学公式对应论文
+'''
+代码假设这 48 种响应对应的“干净图像部分”具有共同峰度，然后寻找最能解释观测数据的噪声方差。
+'''
 def _fit_noise(variances: np.ndarray, kurtoses: np.ndarray, grid_size: int) -> float:
     # 论文式 (7)-(8)：假设干净图像的各滤波响应具有共同峰度，反推噪声方差 v。
     # 令 v < min(variances)，保证估计的干净响应方差 variance_i-v 为正。
-    # Eq. (8) is (kappa_x-3)*(1-v/variance_i)^2 + 3 - kappa_i.
-    # At fixed v this is weighted absolute regression with one parameter,
-    # whose exact minimizer is a weighted median, clipped to kappa_x >= 1.
+    # 式 (8) 为 (kappa_x-3)*(1-v/variance_i)^2 + 3 - kappa_i。
+    # 固定 v 后，目标变为单参数加权绝对误差回归；其精确最优解是加权中位数，
+    # 再将共同峰度约束为 kappa_x >= 1。
     upper = float(variances.min())
     if upper <= 1e-20:
         return 0.0
 
+    # 给一个候选噪声，算预测峰度与观测峰度有多少误差，即寻找局部最优解
     def objective(fraction: float) -> float:
         # fraction=v/upper；固定 v 后，L1 目标对共同超额峰度的最优解是加权中位数。
         weights = (1 - fraction * upper / variances)**2
@@ -133,7 +150,14 @@ def _fit_noise(variances: np.ndarray, kurtoses: np.ndarray, grid_size: int) -> f
     return min(candidates)[1] * upper  # 返回方差 sigma_n^2，不取平方根。
 
 
-# 讲MSCN系数拟合为广义高斯分别（GGD），返回两个数值：alpha描述MSCN数值分布的形状，beta描述MSCN数值分布的尺度
+'''
+MSCN 数组 (H, W)
+→ 求 E[|X|] 和 E[X²]
+→ 用两者的比值拟合 alpha
+→ 用 E[X²] 和 alpha 算 beta
+→ 返回 (alpha, beta)
+'''
+# 讲MSCN系数拟合为广义高斯分布（GGD），返回两个数值：alpha描述MSCN数值分布的形状，beta描述MSCN数值分布的尺度
 def _ggd_parameters(values: np.ndarray, config: LowLevelConfig) -> tuple[float, float]:
     # 比值 (E[|X|])^2 / E[X^2] 消去 beta，只与 alpha 有关。
     second = float(np.mean(values**2))
@@ -141,6 +165,7 @@ def _ggd_parameters(values: np.ndarray, config: LowLevelConfig) -> tuple[float, 
         return 2.0, 0.0
     ratio = float(np.mean(np.abs(values)))**2 / second
 
+    # 计算 alpha 的局部最优解，beta 由 alpha 和 E[X^2] 反推。
     def objective(alpha: float) -> float:
         predicted = np.exp(2 * gammaln(2 / alpha)
                            - gammaln(1 / alpha) - gammaln(3 / alpha))
@@ -159,10 +184,10 @@ def _ggd_parameters(values: np.ndarray, config: LowLevelConfig) -> tuple[float, 
 def extract_low_level(
     rgb: np.ndarray, config: LowLevelConfig = LowLevelConfig(),
 ) -> np.ndarray:
-    """Return float64 shape (7,) for RGB uint8 shape (H,W,3).
+    """将形状 (H,W,3) 的 RGB uint8 图像转为形状 (7,) 的 float64 特征。
 
-    Minimum size permits three bior4.4 levels without every coefficient being
-    boundary affected. No image resizing or learned normalization is applied.
+    最小尺寸保证三级 bior4.4 分解不会让所有系数都受边界影响。
+    不缩放图像，也不应用从数据中学习的标准化参数。
     """
     if not isinstance(rgb, np.ndarray) or rgb.dtype != np.uint8:
         raise ValueError('Input must be a uint8 RGB numpy array')
@@ -175,9 +200,13 @@ def extract_low_level(
     pixels = rgb.astype(np.float64)
     total = pixels.sum(axis=2)  # 沿 RGB 通道求和，(H,W,3) -> (H,W)。
     intensity = total / (3 * 255)
+
+    # 饱和度部分
     ratio = np.ones_like(total)
     np.divide(3 * pixels.min(axis=2), total, out=ratio, where=total > 0)
     saturation = 1 - ratio
+
+    # 灰度部分计算对比度
     gray = pixels @ np.array([0.299, 0.587, 0.114])
 
     # 式 (5)-(6)：灰度概率直方图与均匀分布的 J-S 散度，输出一个标量。
@@ -185,6 +214,8 @@ def extract_low_level(
     histogram = np.bincount(np.floor(gray + 0.5).astype(np.int64).ravel(),
                             minlength=256).astype(np.float64)
     histogram /= histogram.sum()
+
+    # 噪声特征计算
     uniform = np.full(256, 1 / 256)
     mixture = (histogram + uniform) / 2
     contrast = float((rel_entr(histogram, mixture).sum()
@@ -192,13 +223,15 @@ def extract_low_level(
     variances, kurtoses = _dct_moments(gray, config.dct_size)
     noise = _fit_noise(variances, kurtoses, config.noise_grid_size)
 
-    # 式 (9)-(11)：三级 CDF 9/7 小波，汇总水平、垂直、对角细节子带的对数能量。
+    # 锐度特征计算
     coefficients = pywt.wavedec2(gray, 'bior4.4', mode='symmetric', level=3)
     sharpness = 0.0
     # PyWavelets 按粗到细返回三级细节，故权重是 1/7、2/7、4/7；不使用低频近似。
     for weight, bands in zip((1 / 7, 2 / 7, 4 / 7), coefficients[1:]):
         energies = [np.log10(1 + np.mean(band**2)) for band in bands]
         sharpness += weight * np.dot((0.1, 0.1, 0.8), energies)
+
+    
     # 计算自然度的两个参数，alpha和beta
     def smooth(values: np.ndarray) -> np.ndarray:
         return gaussian_filter(values, sigma=config.gaussian_sigma,
@@ -206,11 +239,12 @@ def extract_low_level(
 
     # 式 (12)-(14)：MSCN=(灰度-局部均值)/(局部标准差+1)，仍为 (H,W)。
     # E[X^2]-E[X]^2 计算局部方差；截断浮点误差导致的微小负数，避免 sqrt 出 NaN。
+    # 计算MSCN系数,'减去局部均值，再按局部对比度归一化'
     mean = smooth(gray)
     deviation = np.sqrt(np.maximum(smooth(gray**2) - mean**2, 0))
     mscn = (gray - mean) / (deviation + 1)
     alpha, beta = _ggd_parameters(mscn, config)
-    # 对空间位置取均值后，每张图最终压缩为 (7,)；这七维不是七个质量预测。
+    # 拼接7个参数
     features = np.array([intensity.mean(), saturation.mean(), contrast, noise,
                          sharpness, alpha, beta], dtype=np.float64)
     if not np.isfinite(features).all():

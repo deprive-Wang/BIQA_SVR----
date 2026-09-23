@@ -9,8 +9,8 @@ import csv
 import hashlib
 import json
 from pathlib import Path
-import pickle
-import platform
+import pickle   # 用于保存模型与配置
+import platform # 用于记录训练环境
 import time
 
 import numpy as np
@@ -31,19 +31,14 @@ DEFAULT_CACHE = Path(__file__).resolve().parent / 'features/livec_combined_v2.np
 # II-D / 式 (19)：C 控制超出 epsilon 容忍带的误差惩罚，gamma 控制 RBF 局部性。
 # 下面的搜索范围与三折 CV 属于本项目选择，未核验为作者的超参数配置。
 PARAMETER_GRID = {
-    'svr__C': [1.0, 10.0, 100.0],
-    'svr__gamma': ['scale', 0.001, 0.01],
-    'svr__epsilon': [0.1, 1.0],
+    'svr__C': [1.0, 10.0, 100.0],  # 惩罚强度
+    'svr__gamma': ['scale', 0.001, 0.01],  # RBF 局部性
+    'svr__epsilon': [0.1, 1.0], # 容忍误差
 }
 
-    '''
-    工作流
-    输入特征 X，形状 (N,D)
-    → scale：StandardScaler 按特征列做标准化，形状仍是 (N,D)
-    → svr：RBF 核 SVR，输出预测分数 (N,)
-    '''
+# 工作流：输入特征 X=(N,D)，先逐列标准化，再由 RBF SVR 输出 (N,) 预测分数。
 def make_pipeline() -> Pipeline:
-    """Single source of truth for the estimator and the defaults recorded in config."""
+    """统一构建估计器，确保配置记录与实际默认参数一致。"""
     # 各列的量纲不同，需要训练集均值/标准差。放在 Pipeline 内保证每个 CV 训练折
     # 独立拟合 scaler，验证折和外层测试集只调用 transform，避免数据泄漏。
     return Pipeline([('scale', StandardScaler()),
@@ -52,7 +47,7 @@ def make_pipeline() -> Pipeline:
 
 # 训练之前再检查一次
 def load_training_cache(path: Path, root: Path) -> dict[str, np.ndarray]:
-    """Validate the full combined cache against current annotations and code."""
+    """对照当前标注与源码，校验完整的拼接特征缓存。"""
     with np.load(path, allow_pickle=False) as archive:
         required = {'features', 'names', 'mos', 'stddev', 'annotation_indices',
                     'image_sha256', 'feature_names', 'metadata'}
@@ -90,8 +85,8 @@ def load_training_cache(path: Path, root: Path) -> dict[str, np.ndarray]:
     low_metadata = metadata.get('low_level')
     if not isinstance(low_metadata, dict):
         raise ValueError('Combined cache is missing nested low-level metadata')
-    # Both halves of the 1007-D cache are checked: the semantic extractor itself
-    # and the low-level extractor recorded in the nested low-level metadata.
+    # 分别核对 1007 维缓存的两部分：语义提取器源码，以及嵌套元数据中
+    # 记录的低层提取器源码。
     recorded = {
         ('semantic.py', 'extract_semantic.py'): metadata.get('source_sha256'),
         ('low_level.py', 'livec.py', 'extract_features.py'):
@@ -105,10 +100,16 @@ def load_training_cache(path: Path, root: Path) -> dict[str, np.ndarray]:
                              'verify or regenerate the feature cache')
     return data
 
+# 输入：整份特征 (1162,1007) 和 MOS；
+# 输出：模型、报告、测试集预测。
+# 使用同一组索引切分 X 和 MOS；交叉验证与标准化只用训练集。
 '''
-输入：整份特征（1162，1007）和评分
-输出：训练后的模型、文字报告、测试集预测数组
-先按同一组索引切分 X 和 MOS；交叉验证与标准化都限制在训练集；最后才碰测试集。
+全部图像
+→ 外层分训练/测试
+→ 仅在训练集内分折验证并选择参数
+→ 用整个训练集重训最佳模型
+→ 对测试集推理得到 raw
+→ 对照测试 MOS 计算指标，另做事后 logistic 映射
 '''
 def train_one_split(
     features: np.ndarray, mos: np.ndarray, *, seed: int,
@@ -125,6 +126,7 @@ def train_one_split(
         raise ValueError('Invalid inner CV fold count')
     if type(jobs) is not int or jobs == 0 or jobs < -1:
         raise ValueError('jobs must be positive or -1')
+    
     # III-B：按图像随机分 80%/20%；1162 张时测试数向上取整为 233，训练为 929。
     # 返回的是全数据行索引，同一索引同时切分特征 X 和主观评分 y。
     train_indices, test_indices = train_test_split(
@@ -132,10 +134,14 @@ def train_one_split(
     )
     if np.ptp(mos[train_indices]) == 0:
         raise ValueError('Training MOS is constant for this split')
+
     # 外层测试集只用于最终评估；内层交叉验证只看到训练集。
+    # 内层交叉验证3折，每个折充当一次val
     # inner_splits 的索引相对训练子集，而非全数据。
     inner_cv = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
     inner_splits = list(inner_cv.split(features[train_indices]))
+
+    # 比较SVR参数，使用-MSE评分
     search = GridSearchCV(
         make_pipeline(), PARAMETER_GRID if parameter_grid is None else parameter_grid,
         scoring='neg_mean_squared_error', cv=inner_splits, n_jobs=jobs,
@@ -144,9 +150,12 @@ def train_one_split(
     start = time.perf_counter()
     # 式 (1)、(18)-(19)：以 (929,D) 特征和 (929,) MOS 训练；D 默认 1007。
     # 负 MSE 越大越好；refit=True 用最优参数在整个外层训练集重新拟合 Pipeline。
+
+    # 推理预测测试集MOS
     search.fit(features[train_indices], mos[train_indices])
-    # 式 (2)：测试特征 (233,D) -> 原始质量预测 (233,)，此后才接触测试 MOS。
     raw = search.predict(features[test_indices])
+
+
     # III-A / 式 (20)：利用测试 MOS 的事后曲线拟合仅用于报告，不反馈给调参。
     # 保存的模型仍输出 raw；它不含这条依赖测试标签的曲线。
     mapped, calibration = fit_logistic5(mos[test_indices], raw)
@@ -176,7 +185,7 @@ def train_one_split(
 
 
 def summarize(reports: list[dict]) -> dict:
-    """Keep unavailable metrics explicit with their valid-round counts."""
+    """明确记录不可用指标及其有效轮数，不以零代替。"""
     summary = {}
     for mode in ('raw', 'logistic_mapped'):
         summary[mode] = {}
@@ -196,7 +205,14 @@ def _write_json(path: Path, content: dict) -> None:
     with path.open('x', encoding='utf-8') as stream:
         json.dump(content, stream, indent=2, ensure_ascii=False, allow_nan=False)
 
-
+'''
+命令行参数
+→ 核验完整的 (1162, 1007) 特征缓存
+→ 选择 combined / low / semantic 的列
+→ 对每个 seed 调用 train_one_split()
+→ 保存该轮模型、预测和指标
+→ 汇总所有轮次的指标
+'''
 def main() -> None:
     """读取已校验缓存，按种子重复训练，逐轮保存模型、预测和指标。"""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -223,11 +239,15 @@ def main() -> None:
         data = load_training_cache(args.features, args.root)
     except (OSError, ValueError) as error:
         parser.exit(1, f'Cannot load training data: {error}\n')
+
+    
     # 消融只改变 X 的列：前 7 列为低层，后 1000 列为语义。
     # 相同 seed/repeats 下，三种设置仍使用相同图像划分。
     selection = {'combined': slice(None), 'low': slice(0, 7),
                  'semantic': slice(7, 1007)}[args.feature_set]
     features = data['features'][:, selection]
+
+    
     config = {
         'feature_set': args.feature_set, 'save_models': args.save_models,
         'feature_names': data['feature_names'][selection].tolist(),
@@ -240,7 +260,7 @@ def main() -> None:
         'seeds': list(range(args.seed, args.seed + args.repeats)),
         'inner_cv': {'folds': args.cv_folds, 'shuffle': True, 'scoring': 'neg_mean_squared_error'},
         'parameter_grid': PARAMETER_GRID, 'svr_device': 'CPU (scikit-learn/libsvm)',
-        # Read back from the estimator so the record cannot drift from the code.
+        # 从实际估计器读取默认参数，避免配置记录与代码不一致。
         'svr_defaults': {key: value for key, value in make_pipeline()['svr'].get_params().items()
                          if f'svr__{key}' not in PARAMETER_GRID},
         'standardization': 'StandardScaler in each inner fold; refit on outer training only',

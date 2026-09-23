@@ -1,4 +1,4 @@
-"""Extract BCQI low-level features in LIVEC annotation order."""
+"""按 LIVEC 标注顺序提取 BCQI 低层特征。"""
 
 import argparse
 import hashlib
@@ -17,7 +17,7 @@ from low_level import FEATURE_NAMES, LowLevelConfig, extract_low_level
 
 # 逐张读取 LIVEC 图像，算出每张图的 7 维低层特征，再连同图像名、MOS 等信息保存为一个 .npz 文件
 def main() -> None:
-    """Write an auditable NPZ cache; refuse to overwrite an existing result."""
+    """写入可追溯的 NPZ 缓存，并拒绝覆盖已有结果。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=DEFAULT_ROOT)
     parser.add_argument('--output', type=Path, required=True)
@@ -77,7 +77,7 @@ def main() -> None:
 
     # 写入npz文件
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    # Exclusive creation protects existing runs, including concurrent writers.
+    # 独占创建文件，避免覆盖已有结果，也避免并发写入时发生冲突。
     with args.output.open('xb') as stream:
         try:
             # N 个 (7,) 堆叠为 (N,7)；此时不拟合标准化，避免利用后续测试集统计量。

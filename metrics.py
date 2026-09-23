@@ -14,7 +14,7 @@ def _validate_pair(target: np.ndarray, prediction: np.ndarray) -> None:
 
 
 def quality_metrics(target: np.ndarray, prediction: np.ndarray) -> dict[str, float | None]:
-    """Compute signed correlations; undefined constant-vector correlations are null."""
+    """计算带符号的相关系数；常量向量使相关系数未定义，返回 None。"""
     _validate_pair(target, prediction)
     # III-A：SRCC/KRCC 衡量排序一致性，PLCC 衡量线性相关，RMSE 衡量分数误差。
     # 常量向量的相关系数未定义，保留 None；相关系数保留正负号，不用绝对值掩盖反向。
@@ -28,7 +28,7 @@ def quality_metrics(target: np.ndarray, prediction: np.ndarray) -> dict[str, flo
 
 
 def logistic5(values: np.ndarray, parameters: np.ndarray) -> np.ndarray:
-    """Paper Eq. (20); values may be standardized using saved center/scale."""
+    """论文式 (20)；输入可用保存的中心值和尺度进行标准化。"""
     # 式 (20)：expit(t)-1/2 等价于 1/2-1/(1+exp(t))，且数值计算更稳定。
     # 五个参数依次对应 beta1~beta5；输入标准化时参数表示在标准化坐标中的形式。
     amplitude, slope, midpoint, linear, offset = parameters

@@ -1,4 +1,4 @@
-"""BCQI-style 1000-D SqueezeNet features using torchvision ImageNet weights."""
+"""使用 torchvision ImageNet 权重提取 BCQI 风格的 1000 维 SqueezeNet 特征。"""
 
 import hashlib
 from pathlib import Path
@@ -18,7 +18,7 @@ WEIGHTS_URL = SqueezeNet1_1_Weights.IMAGENET1K_V1.url
 WEIGHTS_SHA256 = 'b8a52dc049b60e4b6ab68ad0df457362afab8b6304b2febdc1650a5dab4d7e7b'
 CROP_SIZE = 227
 SEMANTIC_NAMES = tuple(f'semantic_{index:04d}' for index in range(1000))
-# Built once at import; the per-image values are fixed by the chosen weights.
+# 导入模块时只构建一次；每张图的预处理参数由所选权重确定。
 WEIGHT_TRANSFORM = SqueezeNet1_1_Weights.IMAGENET1K_V1.transforms()
 NORMALIZE_MEAN = torch.tensor(WEIGHT_TRANSFORM.mean)[:, None, None]
 NORMALIZE_STD = torch.tensor(WEIGHT_TRANSFORM.std)[:, None, None]
@@ -32,12 +32,11 @@ permute(2, 0, 1) 变成 (3, 227, 227)
 每个颜色通道分别减 mean、除 std
 返回 PyTorch Tensor (3, 227, 227)
 '''
-
 def prepare_rgb(rgb: np.ndarray) -> torch.Tensor:
-    """Center-crop RGB uint8 to 227 square and apply weight-specific normalization.
+    """将 RGB uint8 图像中心裁剪为 227×227，并按权重要求做归一化。
 
-    Odd excess pixels are dropped from the bottom/right (floor crop origin).
-    No resize, padding, EXIF orientation or ICC conversion is performed.
+    多余像素数为奇数时，底部或右侧多舍去一个像素。这里不缩放、不填充，
+    也不应用 EXIF 方向调整或 ICC 色彩转换。
     """
     if not isinstance(rgb, np.ndarray) or rgb.dtype != np.uint8:
         raise ValueError('Expected a uint8 RGB numpy array')
@@ -56,7 +55,7 @@ def prepare_rgb(rgb: np.ndarray) -> torch.Tensor:
 
 # 加载并验证 SqueezeNet 模型权重
 def _load_verified_model(weights_path: Path) -> nn.Module:
-    # Verify bytes before deserializing; never silently fall back to random weights.
+    # 反序列化前先核验权重文件内容，失败时不回退到随机权重。
     with weights_path.open('rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
         if digest != WEIGHTS_SHA256:
@@ -69,7 +68,7 @@ def _load_verified_model(weights_path: Path) -> nn.Module:
 
 # 定义一个类，封装 SqueezeNet 模型，提供特征提取和元数据查询功能
 class SemanticExtractor:
-    """Frozen SqueezeNet v1.1; returns pooled activations, without softmax."""
+    """冻结的 SqueezeNet v1.1；返回池化后的激活值，不应用 softmax。"""
 
     def __init__(
         self, weights_path: str | Path = DEFAULT_WEIGHTS, *, device: str = 'cuda',
@@ -94,11 +93,11 @@ class SemanticExtractor:
     → prepare_rgb()：每张变成 (3,227,227)
     → torch.stack()：合成 (B,3,227,227)
     → 移到 CPU 或 GPU
-    → SqueezeNet：得到 (B,1000)
+    → SqueezeNet：得到 (B,1000)35
     → 移回 CPU，转 NumPy 数组返回
     '''
     def extract(self, images: Sequence[np.ndarray]) -> np.ndarray:
-        """Return float32 (B,1000) features for a nonempty batch of RGB arrays."""
+        """对非空 RGB 图像批次返回形状 (B,1000) 的 float32 特征。"""
         if len(images) == 0:
             raise ValueError('Image batch must not be empty')
         # 新增批维，B 张图组成 (B,3,227,227)，不要求这些原图的尺寸相同。
@@ -107,13 +106,13 @@ class SemanticExtractor:
             batch = batch.pin_memory().to(self.device, non_blocking=True)
         else:
             batch = batch.to(self.device)
-        # Ampere TF32 can choose different reduced-precision kernels for
-        # different batch sizes. Keep feature extraction in IEEE float32.
+        # Ampere 的 TF32 可能随批大小选择不同的降精度卷积实现；
+        # 关闭相关选项，让特征提取保持 float32 精度。
         with torch.inference_mode(), torch.backends.cudnn.flags(
             enabled=True, benchmark=False, deterministic=True, allow_tf32=False,
         ):
-            # torchvision's classifier ends in ReLU + AdaptiveAvgPool2d,
-            # and forward flattens that output; there is no softmax layer.
+            # torchvision 分类头末尾是 ReLU 和 AdaptiveAvgPool2d；
+            # 前向传播将池化结果展平，不包含 softmax 层。
             # 图 5 的全局平均池化：每个通道的空间响应压成一个数，得到 (B,1000)。
             # 这 1000 维是激活特征，不是类别编号，也不是 softmax 分类概率。
             features = self.model(batch)
@@ -125,7 +124,7 @@ class SemanticExtractor:
 
     # 查询模型元数据，记录版本、架构、权重、预处理、输出、维度、评估模式、梯度、设备、dtype、cudnn、MATLAB 等价
     def metadata(self) -> dict:
-        """Document the reproducible Python variant and its MATLAB boundary."""
+        """记录 Python 复现配置及其与 MATLAB 实现尚未核验的边界。"""
         return {
             'version': 'bcqi-semantic-torchvision-v1',
             'architecture': 'squeezenet1_1',
