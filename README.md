@@ -26,7 +26,7 @@
 | `metrics.py` | 四项质量指标和五参数 logistic 事后映射 |
 | `plot_results.py` | 完成轮数与产物一致性检查、指标分布、固定轮次诊断、同划分消融图 |
 | `predict_image.py` | 使用可信的已保存模型，对单张原始 RGB 图像输出未经测试集 logistic 映射的 MOS 预测 |
-| `compare_baselines.py` | 提取 BRISQUE 分数，与 BCQI 在同一测试图像上比较并做逐轮配对显著性检验 |
+| `compare_baselines.py` | 提取 BRISQUE、NIQE 分数，与 BCQI 在同一测试图像上比较并做逐轮配对显著性检验 |
 
 从项目根目录执行下文命令。已有且通过一致性检查的特征缓存可直接用于 SVR，不必每次重新提取。修改提取器、权重或预处理后应重新生成受影响的缓存，不要绕过源码/内容哈希检查。
 
@@ -165,18 +165,26 @@ NPZ 使用 `allow_pickle=False` 即可读取，包含 `features`、`names`、`mo
 
 ## 基线比较与显著性检验
 
-`compare_baselines.py` 在正式 LIVEC 图像上提取 BRISQUE 分数（由 [PIQ](https://github.com/photosynthesis-team/piq) `0.8.0` 提供），并记录图片及 BRISQUE 权重哈希。输入 PIQ 前使用整张原图、不预先缩放；PIQ 内部仍按 BRISQUE 算法处理双尺度。原始分数越小表示质量越高，保存的比较分数会取负以统一方向。首次运行会将 PIQ 提供的 BRISQUE SVR 权重下载到 `checkpoints/piq/`；后续复用。该预训练 BRISQUE 是可运行的比较基线，**不是**论文表 II 中按每轮训练集重新训练的 BRISQUE，因此不可直接声称复现该行数值。
+目前选取两种有代表性的对比方法：有监督、使用公开预训练权重的 BRISQUE，以及无需 LIVEC MOS 训练的 NIQE。`compare_baselines.py` 在正式 LIVEC 图像上提取 BRISQUE 分数（由 [PIQ](https://github.com/photosynthesis-team/piq) `0.8.0` 提供），并记录图片及 BRISQUE 权重哈希。输入 PIQ 前使用整张原图、不预先缩放；PIQ 内部仍按 BRISQUE 算法处理双尺度。首次运行会将 PIQ 提供的 BRISQUE SVR 权重下载到 `checkpoints/piq/`；后续复用。该预训练 BRISQUE 是可运行的比较基线，**不是**论文表 II 中按每轮训练集重新训练的 BRISQUE，因此不可直接声称复现该行数值。
+
+NIQE 使用 [scikit-video 1.3.0](https://github.com/scikit-video/scikit-video/releases/tag/v1.3.0) 的参考自然图像模型；该版本在 GitHub 发布，PyPI 的旧版 NIQE 实现不等价。输入为整张原始 RGB 图，经 Pillow 转成 8-bit 灰度后交给 `skvideo.measure.niqe`，不预先缩放。BRISQUE、NIQE 原始分数都是越低越好；保存的比较分数取负，以便同 BCQI 一起按“越高越好”计算相关系数。此处灰度转换等实现选择未证实与论文作者完全一致，不能将所得数值称为表 II 的精确复现。
 
 ```powershell
 # 仅在缓存尚不存在时提取；输出文件不允许覆盖。
 & 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py extract-brisque --output features/livec_brisque_piq_v1.npz --device cuda
 # 完成 1000 轮实验后，复用上述缓存进行正式比较。
 & 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py compare --run outputs/svr_1000_logistic_fixed --baseline features/livec_brisque_piq_v1.npz --output outputs/compare_brisque.json
+# NIQE 的轻量依赖单独安装；已经安装且版本一致时跳过。
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' -m pip install -r requirements-baselines.txt
+# 首次对 1162 张图各算一次 NIQE，输出不可覆盖。
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py extract-niqe --output features/livec_niqe_skvideo_v1.npz
+# 先选已保存的前 50 组测试划分做初步比较；不重新训练 BCQI。
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py compare --run outputs/svr_1000_logistic_fixed --baseline features/livec_niqe_skvideo_v1.npz --rounds 50 --allow-debug --output outputs/compare_niqe_50_debug.json
 ```
 
 比较程序要求基线和 BCQI 使用同一份完整特征缓存、1162 个相同图像 ID、MOS 与图像哈希；每轮只取相同的 233 张测试图像。基线分数与 BCQI 一样分别报告原始和测试集事后 logistic 映射的四项指标。显著性检验使用**同一轮、同一图像**的映射后绝对残差做双侧配对 t 检验，多基线时对该轮 p 值做 Holm 校正，显著性水平为 0.05；各轮独立报告，不将重复出现的图像跨轮合并。论文只写了对预测残差作 t 检验，未说明配对形式和多重比较处理；本实现是明确记录的项目协议，不能宣称与表 III 的检验完全一致。某轮任一模型的 logistic 拟合失败时，该轮不做配对检验，并保留有效轮数。
 
-默认只接受完成 1000 轮的实验；少轮调试需添加 `--allow-debug`，报告也会标记为调试结果。比较入口可一次接收多个符合相同 NPZ 字段和数据校验规则的基线档案；目前内置提取器只有 BRISQUE。
+默认只接受完成 1000 轮的实验；少轮实验或使用 `--rounds N` 只比较前 N 组已保存的划分时，需添加 `--allow-debug`，报告会标记为调试结果。50 轮结果可用来判断方向和耗时，不能当作论文的 1000 轮均值。比较入口可一次接收多个符合相同 NPZ 字段和数据校验规则的基线档案；目前内置提取器为 BRISQUE 和 NIQE。两个基线均先对 1162 张图片各算一次分数，后续每轮只复用这份分数计算指标与显著性检验，因此不会重复做图像推理或训练。但每轮的事后 logistic 映射仍有计算时间。已有 BRISQUE 报告无需重算。
 
 本地已有的 BRISQUE 全量缓存可直接复用。若只需检查比较流程，可将上例的 `--run` 换为已完成的单轮实验目录，另外指定尚不存在的输出文件，并加上 `--allow-debug`；所得结果只用于调试，不作论文结论。
 

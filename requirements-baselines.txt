@@ -1,0 +1,2 @@
+# NIQE 1.3.0 is distributed on GitHub; PyPI still serves the older 1.1.11.
+scikit-video @ https://github.com/scikit-video/scikit-video/releases/download/v1.3.0/scikit_video-1.3.0-py3-none-any.whl#sha256=4b5a70458f2a303cf9f150906a19f487cfc96a36092909a9aa2d9ddf1c79126b

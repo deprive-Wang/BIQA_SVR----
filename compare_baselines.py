@@ -1,7 +1,8 @@
-"""Extract a BRISQUE baseline and compare it with BCQI on identical LIVEC splits."""
+"""Extract reference baselines and compare them with BCQI on LIVEC splits."""
 
 import argparse
 import hashlib
+from importlib.metadata import version
 import json
 from pathlib import Path
 
@@ -98,6 +99,69 @@ def extract_brisque(cache: Path, root: Path, output: Path, *, device: str = 'cpu
             raise
 
 
+def extract_niqe(cache: Path, root: Path, output: Path,
+                 *, limit: int | None = None) -> None:
+    """Save NIQE scores for the same LIVEC images as the BCQI feature cache."""
+    if limit is not None and (type(limit) is not int or not 1 <= limit <= 1162):
+        raise ValueError('limit must be in [1, 1162]')
+    if output.suffix != '.npz' or output.exists():
+        raise ValueError('Output must be a new .npz file')
+    if output.resolve().is_relative_to(root.resolve()):
+        raise ValueError('Output must be outside the raw dataset directory')
+
+    from skvideo.measure import niqe
+
+    skvideo_version = version('scikit-video')
+    if skvideo_version != '1.3.0':
+        raise ValueError(f'NIQE requires scikit-video 1.3.0, got {skvideo_version}')
+    data = load_training_cache(cache, root)
+    count = 1162 if limit is None else limit
+    names = data['names'][:count]
+    scores = []
+    image_hashes = []
+    for index, name in enumerate(names):
+        path = root.resolve() / 'Images' / str(name)
+        with path.open('rb') as stream:
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            if digest != data['image_sha256'][index]:
+                raise ValueError(f'Image changed since BCQI extraction: {name}')
+            stream.seek(0)
+            with Image.open(stream) as image:
+                image.load()
+                if image.mode != 'RGB':
+                    raise ValueError(f'Expected RGB image: {name}')
+                grayscale = np.asarray(image.convert('L')).copy()
+        result = np.asarray(niqe(grayscale), dtype=float)
+        if result.shape != (1,) or not np.isfinite(result[0]):
+            raise ValueError(f'Invalid NIQE score: {name}')
+        scores.append(float(result[0]))
+        image_hashes.append(digest)
+        if (index + 1) % 25 == 0 or index + 1 == count:
+            print(f'NIQE {index + 1}/{count}', flush=True)
+
+    metadata = {
+        'method': 'NIQE', 'implementation': 'skvideo.measure.niqe',
+        'scikit_video_version': skvideo_version,
+        'input': 'original RGB image converted to PIL L grayscale; full resolution',
+        'source_cache_sha256': _sha256(cache),
+        'direction': 'lower original score means higher quality; stored score is negated',
+        'debug_subset': count != 1162, 'sample_count': count,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open('xb') as stream:
+        try:
+            np.savez_compressed(
+                stream, names=names, mos=data['mos'][:count],
+                source_scores=np.asarray(scores), scores=-np.asarray(scores),
+                image_sha256=np.asarray(image_hashes),
+                metadata=np.array(json.dumps(metadata, ensure_ascii=False)),
+            )
+        except BaseException:
+            stream.close()
+            output.unlink()
+            raise
+
+
 def _load_baseline(path: Path, names: list[str], mos: np.ndarray,
                    image_hashes: np.ndarray,
                    cache_sha256: str) -> tuple[str, np.ndarray, dict]:
@@ -169,11 +233,18 @@ def _holm_adjust(tests: dict[str, dict]) -> None:
 
 
 def compare(run_path: Path, baseline_paths: list[Path], output: Path,
-            *, allow_debug: bool = False) -> dict:
+            *, allow_debug: bool = False, max_rounds: int | None = None) -> dict:
     """Compare independent baseline scores on each saved BCQI test split."""
     if not baseline_paths or output.suffix != '.json' or output.exists():
         raise ValueError('Provide baselines and a new .json output file')
     experiment = load_experiment(run_path, allow_debug=allow_debug)
+    available_rounds = len(experiment.reports)
+    if max_rounds is not None and (
+            type(max_rounds) is not int or not 1 <= max_rounds <= available_rounds):
+        raise ValueError(f'rounds must be in [1, {available_rounds}]')
+    selected_rounds = available_rounds if max_rounds is None else max_rounds
+    if selected_rounds < available_rounds and not allow_debug:
+        raise ValueError('A partial-round comparison requires --allow-debug')
     config = experiment.config
     names = config['sample_names']
     cache = Path(config['cache_path'])
@@ -201,7 +272,8 @@ def compare(run_path: Path, baseline_paths: list[Path], output: Path,
     rounds = []
     metric_names = ('srcc', 'krcc', 'plcc', 'rmse')
     for index, (arrays, bcqi_report) in enumerate(
-            zip(experiment.predictions, experiment.reports)):
+            zip(experiment.predictions[:selected_rounds],
+                experiment.reports[:selected_rounds])):
         test_indices = arrays['test_indices']
         target = arrays['target']
         if not np.array_equal(target, known_mos[test_indices]):
@@ -251,7 +323,8 @@ def compare(run_path: Path, baseline_paths: list[Path], output: Path,
             'valid_rounds': len(decisions), 'total_rounds': len(rounds),
         }
     result = {
-        'status': 'complete', 'debug': allow_debug,
+        'status': 'complete', 'debug': allow_debug or selected_rounds < 1000,
+        'selected_rounds': selected_rounds, 'available_rounds': available_rounds,
         'run': str(run_path.resolve()),
         'run_config_sha256': _sha256(run_path / 'config.json'),
         'protocol': 'same saved test images; test-set five-parameter logistic for reporting',
@@ -276,21 +349,30 @@ def main() -> None:
     extraction.add_argument('--output', type=Path, required=True)
     extraction.add_argument('--device', choices=('cpu', 'cuda'), default='cpu')
     extraction.add_argument('--limit', type=int)
+    niqe_extraction = commands.add_parser('extract-niqe')
+    niqe_extraction.add_argument('--cache', type=Path, default=DEFAULT_CACHE)
+    niqe_extraction.add_argument('--root', type=Path, default=DEFAULT_ROOT)
+    niqe_extraction.add_argument('--output', type=Path, required=True)
+    niqe_extraction.add_argument('--limit', type=int)
     comparison = commands.add_parser('compare')
     comparison.add_argument('--run', type=Path, required=True)
     comparison.add_argument('--baseline', type=Path, nargs='+', required=True)
     comparison.add_argument('--output', type=Path, required=True)
     comparison.add_argument('--allow-debug', action='store_true')
+    comparison.add_argument('--rounds', type=int,
+                            help='Compare only the first N saved splits (debug only)')
     args = parser.parse_args()
     try:
         if args.command == 'extract-brisque':
             extract_brisque(args.cache, args.root, args.output,
                             device=args.device, limit=args.limit)
+        elif args.command == 'extract-niqe':
+            extract_niqe(args.cache, args.root, args.output, limit=args.limit)
         else:
             result = compare(args.run, args.baseline, args.output,
-                             allow_debug=args.allow_debug)
+                             allow_debug=args.allow_debug, max_rounds=args.rounds)
             print(json.dumps(result['summary'], ensure_ascii=False))
-    except (OSError, ValueError, RuntimeError, KeyError) as error:
+    except (OSError, ValueError, RuntimeError, KeyError, ImportError) as error:
         parser.exit(1, f'Baseline comparison failed: {error}\n')
 
 
