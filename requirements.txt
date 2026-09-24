@@ -8,5 +8,6 @@ PyWavelets>=1.5,<2
 matplotlib>=3.8,<4
 torch>=2.2,<3
 torchvision>=0.17,<1
+piq==0.8.0
 # 由 pip 解析兼容的 torch/torchvision 版本组合。
 # GPU 构建需按目标机器情况，参照 PyTorch 官方说明另行选择。

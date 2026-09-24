@@ -8,12 +8,12 @@
 
 当前已实现特征提取、训练评估和结果绘图入口；尚无可作为完整实验结论的正式结果。单轮开发验证只用于检查流程，不能作为论文复现结果引用，生成产物不纳入 Git。
 
-- 已实现：正式样本筛选与标签对齐、低层/语义特征提取、缓存一致性校验、训练集内部调参、模型保存、原始与 logistic 映射后四项指标、多轮均值汇总。
+- 已实现：正式样本筛选与标签对齐、低层/语义特征提取、缓存一致性校验、训练集内部调参、模型保存、原始与 logistic 映射后四项指标、多轮均值汇总、单图原始分数推理、BRISQUE 基线提取及同划分显著性比较入口。
 - 已提供：1000 次随机划分入口，以及低层、语义、拼接三种特征的消融入口；入口可用不代表对应实验已经执行。
-- 尚未完成：PWRC 指标、1000 轮正式实验及消融结果。作者源码未核验，当前权重、预处理和数值选择不能声明与作者实现完全一致。
-- 不在当前范围：CID2013、跨数据库实验、网络微调。预测可通过保存的模型调用 `predict`；尚未提供直接输入任意图像的一键预测命令。
+- 尚未完成：PWRC 指标、1000 轮正式实验及消融结果，以及论文表 II 的完整基线方法集合。当前权重、预处理和数值选择以本项目记录的 Python 实现为准。
+- 不在当前范围：CID2013、跨数据库实验、网络微调。单图预测已提供命令行入口；当前仅输出原始 SVR 分数，不提供利用测试集 MOS 拟合的部署校准分数。
 
-后续顺序为：确认是否补齐 PWRC → 固定当前复现配置 → 在相同划分下运行主实验和消融 → 汇总均值、有效轮数及与论文的差异。不要依据测试集表现挑选参数或随机种子。
+后续顺序为：固定当前复现配置 → 在相同划分下运行主实验、消融和基线 → 补齐 PWRC → 汇总均值、有效轮数及与论文的差异。不要依据测试集表现挑选参数或随机种子。
 
 ## 代码入口
 
@@ -25,14 +25,16 @@
 | `train_svr.py` | 划分、训练内交叉验证、RBF SVR、消融和多轮产物保存（CPU） |
 | `metrics.py` | 四项质量指标和五参数 logistic 事后映射 |
 | `plot_results.py` | 完成轮数与产物一致性检查、指标分布、固定轮次诊断、同划分消融图 |
+| `predict_image.py` | 使用可信的已保存模型，对单张原始 RGB 图像输出未经测试集 logistic 映射的 MOS 预测 |
+| `compare_baselines.py` | 提取 BRISQUE 分数，与 BCQI 在同一测试图像上比较并做逐轮配对显著性检验 |
 
 从项目根目录执行下文命令。已有且通过一致性检查的特征缓存可直接用于 SVR，不必每次重新提取。修改提取器、权重或预处理后应重新生成受影响的缓存，不要绕过源码/内容哈希检查。
 
-讲解代码时按 `livec.py`（名称与 MOS 对齐）→ `extract_features.py` / `low_level.py`（每图 7 维）→ `extract_semantic.py` / `semantic.py`（每图 1000 维，拼成 1007 维）→ `train_svr.py` / `metrics.py`（划分、调参、预测、评估）→ `plot_results.py`（读取已保存结果画图）的顺序看。提取器缓存会核对源码全文哈希；注释变化也会使旧缓存失效。
+讲解代码时按 `livec.py`（名称与 MOS 对齐）→ `extract_features.py` / `low_level.py`（每图 7 维）→ `extract_semantic.py` / `semantic.py`（每图 1000 维，拼成 1007 维）→ `train_svr.py` / `metrics.py`（划分、调参、预测、评估）→ `predict_image.py`（单图推理）→ `compare_baselines.py`（同图像比较）→ `plot_results.py`（读取已保存结果画图）的顺序看。提取器缓存会核对源码全文哈希；注释变化也会使旧缓存失效。
 
 ## 作者代码
 
-论文提供的入口为 [YT2015 的 GitHub 仓库列表](https://github.com/YT2015?tab=repositories)。2026-09-20 检查时，主页列出 NPQI、SNP-NIQE、UIQI、ATUIQP、FSI，未找到可确认的 BCQI 仓库。论文声明已公开代码，但当前下载入口尚未确认；不能把其他算法仓库当作 BCQI。
+论文提供的入口为 [YT2015 的 GitHub 仓库列表](https://github.com/YT2015?tab=repositories)。2026-09-20 检查时，未找到可确认的 BCQI 仓库；当前无法取得作者源码。项目继续使用已经记录参数和预处理选择的 Python 实现，不等待作者源码，也不将本项目代码或结果称为作者官方实现或精确复现。
 
 ## 本地数据
 
@@ -88,7 +90,7 @@
 
 NPZ 使用 `allow_pickle=False` 即可读取，包含 `features`、`names`、`mos`、`stddev`、`annotation_indices`、`image_sha256`、`feature_names` 和 JSON 字符串 `metadata`。缓存记录配置、源码 SHA-256、依赖版本和是否为调试子集，不进行全数据标准化。
 
-实现边界：以下为显式的 Python 复现选择，并非已核验的作者默认值。取得作者代码后需要重新比对，尤其是噪声估计。
+实现边界：以下为本项目采用的 Python 数值选择，并非已核验的作者默认值；尤其是噪声估计。后续实验沿用这些已记录的选择，结果应注明配置。
 
 - HSI 亮度采用 RGB 均值并归一化到 [0,1]，饱和度为 `1 - min(R,G,B)/mean(R,G,B)`；黑像素饱和度设为 0。其他属性采用浮点 BT.601 灰度 [0,255]，不执行 EXIF 旋转或 ICC 色彩转换。
 - 对比度采用四舍五入灰度的 256 档概率直方图，与均匀分布计算自然对数 J-S **散度**，不取平方根。
@@ -139,22 +141,62 @@ NPZ 使用 `allow_pickle=False` 即可读取，包含 `features`、`names`、`mo
 
 `model.pkl` 保存 StandardScaler+SVR，可对相同列顺序的特征调用 `predict`，返回原始 MOS 预测。仅加载自己生成且可信的 pickle 文件。模型不包含测试集 logistic 校准；该映射只用于论文式事后评估，不用于部署或参数选择。
 
-`metrics.py` 同时提供原始预测和五参数 logistic 映射后的 SRCC、KRCC、PLCC、RMSE。logistic 拟合将预测标准化后重参数化，使用三个起点及有界斜率/中点；数值边界记录在报告中。常量相关系数、不可识别或失败的拟合明确记为 null/失败状态，不伪造成功值。汇总保留每项有效轮次数，避免失败被静默忽略。相关系数保留符号，不取绝对值。
+`metrics.py` 同时提供原始预测和五参数 logistic 映射后的 SRCC、KRCC、PLCC、RMSE。logistic 拟合先使用三个起点直接优化；如果全部达到计算上限或未收敛，则消去三个线性参数，对余下两个参数做确定性的有界搜索。常量相关系数、不可识别或失败的拟合明确记为 null/失败状态，不伪造成功值。汇总保留每项有效轮次数，避免失败被静默忽略。相关系数保留符号，不取绝对值。
+
+已完成的 `outputs/svr_1000` 有 38 轮仅 logistic 映射失败，原始预测完整。下列命令只用保存的测试预测与 MOS 修复这些映射，复制成新目录；原实验不变，不重新训练 SVR。新目录含 `recalibration.json` 记录来源与修复轮次，并再次逐轮核验。
+
+```powershell
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' recalibrate_run.py --run outputs/svr_1000 --output outputs/svr_1000_logistic_fixed
+```
 
 论文主实验为 80%/20% 随机划分、1000 次重复并报告均值。程序保存每轮种子和图像 ID；预处理参数与 SVR 超参数仅从训练集确定。小轮数用于调试，不能当作完整复现结果。
 
 主要指标为 SRCC、KRCC、PLCC、RMSE，表 II 另有 PWRC（当前未实现），因此不能宣称完整复现表 II。五参数 logistic 映射与原始预测分别保留；网络权重、数值约定和调参范围与作者实现尚未确认一致。后续开发约定见 [AGENTS.md](AGENTS.md)。
 
+## 单图质量预测
+
+使用本项目生成且可信的 `model.pkl`。输入须为 RGB 图像：`combined` 或 `semantic` 模型要求最小边长 227 像素，`low` 模型要求最小边长 72 像素。低层属性从原图计算，语义分支按当前 SqueezeNet 预处理。默认使用 CUDA，诊断时可显式指定 `--device cpu`。输出是 SVR 的原始 MOS 预测，不使用依赖测试集 MOS 拟合的 logistic 曲线，也不强制截断到 [0,100]。
+
+```powershell
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' predict_image.py --run outputs/svr_seed42_current --image 'data/ChallengeDB_release/Images/10.bmp' --device cuda
+```
+
+示例中的 `svr_seed42_current` 是单轮开发验证模型；正式使用时将模型目录替换为自己已完成的训练结果。默认读取第 0 轮；只有保存了对应轮次模型时才能使用 `--round` 选择其他轮次。输入图像若不是 RGB、尺寸不够、无法解码，或模型的特征维度和预处理配置不兼容，会明确报错。
+
+## 基线比较与显著性检验
+
+`compare_baselines.py` 在正式 LIVEC 图像上提取 BRISQUE 分数（由 [PIQ](https://github.com/photosynthesis-team/piq) `0.8.0` 提供），并记录图片及 BRISQUE 权重哈希。输入 PIQ 前使用整张原图、不预先缩放；PIQ 内部仍按 BRISQUE 算法处理双尺度。原始分数越小表示质量越高，保存的比较分数会取负以统一方向。首次运行会将 PIQ 提供的 BRISQUE SVR 权重下载到 `checkpoints/piq/`；后续复用。该预训练 BRISQUE 是可运行的比较基线，**不是**论文表 II 中按每轮训练集重新训练的 BRISQUE，因此不可直接声称复现该行数值。
+
+```powershell
+# 仅在缓存尚不存在时提取；输出文件不允许覆盖。
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py extract-brisque --output features/livec_brisque_piq_v1.npz --device cuda
+# 完成 1000 轮实验后，复用上述缓存进行正式比较。
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py compare --run outputs/svr_1000_logistic_fixed --baseline features/livec_brisque_piq_v1.npz --output outputs/compare_brisque.json
+```
+
+比较程序要求基线和 BCQI 使用同一份完整特征缓存、1162 个相同图像 ID、MOS 与图像哈希；每轮只取相同的 233 张测试图像。基线分数与 BCQI 一样分别报告原始和测试集事后 logistic 映射的四项指标。显著性检验使用**同一轮、同一图像**的映射后绝对残差做双侧配对 t 检验，多基线时对该轮 p 值做 Holm 校正，显著性水平为 0.05；各轮独立报告，不将重复出现的图像跨轮合并。论文只写了对预测残差作 t 检验，未说明配对形式和多重比较处理；本实现是明确记录的项目协议，不能宣称与表 III 的检验完全一致。某轮任一模型的 logistic 拟合失败时，该轮不做配对检验，并保留有效轮数。
+
+默认只接受完成 1000 轮的实验；少轮调试需添加 `--allow-debug`，报告也会标记为调试结果。比较入口可一次接收多个符合相同 NPZ 字段和数据校验规则的基线档案；目前内置提取器只有 BRISQUE。
+
+本地已有的 BRISQUE 全量缓存可直接复用。若只需检查比较流程，可将上例的 `--run` 换为已完成的单轮实验目录，另外指定尚不存在的输出文件，并加上 `--allow-debug`；所得结果只用于调试，不作论文结论。
+
+开发测试使用项目环境中的 `pytest`，新环境可先按测试依赖清单安装，再运行已有的基线比较与单图推理测试：
+
+```powershell
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' -m pip install -r requirements-dev.txt
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' -m pytest -q tests
+```
+
 ## 实验结果绘图
 
 `plot_results.py` 只读取已有实验产物，不训练模型、不重新拟合 logistic，不加载 `model.pkl`。默认要求请求并完成 1000 轮，验证每轮 929/233 划分、图像 ID、MOS、保存的映射参数、预测与指标以及汇总一致性。完成 1000 轮仅表示满足重复次数要求，不代表已完成作者实现对齐或 PWRC。
 
-正式实验完成后执行（以下不是已完成结果）：
+绘图命令示例（绘图尚未执行）：
 
 ```powershell
-& 'E:\Miniforge\envs\BIQA_SVR\python.exe' plot_results.py --runs outputs/svr_1000 --output outputs/figures_main
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' plot_results.py --runs outputs/svr_1000_logistic_fixed --output outputs/figures_main
 # 消融对比：三份实验必须具有相同缓存来源、种子、内外层划分和调参协议。
-& 'E:\Miniforge\envs\BIQA_SVR\python.exe' plot_results.py --runs outputs/svr_low_1000 outputs/svr_semantic_1000 outputs/svr_1000 --output outputs/figures_ablation
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' plot_results.py --runs outputs/svr_low_1000 outputs/svr_semantic_1000 outputs/svr_1000_logistic_fixed --output outputs/figures_ablation
 ```
 
 输出为 PNG、PDF，以及精确统计表 `metrics_summary.csv` 和来源记录 `plot_manifest.json`。两张指标图分别展示原始与映射后 SRCC/KRCC/PLCC/RMSE 的跨轮分布、均值与总体标准差，并显示有效轮数；标准差不是置信区间。每个方法另输出散点/残差/误差分布组合图及保存的 logistic 曲线，默认固定第 0 轮，仅作诊断，不把该轮当作总体结果，不合并各轮重复出现的图像计算一个总相关系数。
