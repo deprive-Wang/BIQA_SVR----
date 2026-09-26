@@ -168,9 +168,22 @@ def validate_comparison(experiments: list[Experiment]) -> None:
     reference = experiments[0]
     for experiment in experiments[1:]:
         for key in ('cache_sha256', 'sample_names', 'seeds', 'inner_cv', 'parameter_grid',
-                    'standardization', 'svr_defaults', 'source_sha256', 'logistic'):
+                    'standardization', 'svr_defaults', 'logistic'):
             if key not in reference.config or experiment.config.get(key) != reference.config[key]:
                 raise ValueError(f'Ablation protocol mismatch: {key}')
+        left_source = reference.config.get('source_sha256', {})
+        right_source = experiment.config.get('source_sha256', {})
+        if left_source.get('train_svr.py') != right_source.get('train_svr.py'):
+            raise ValueError('Ablation training source mismatch')
+        if left_source.get('metrics.py') != right_source.get('metrics.py'):
+            recalibrated = next((item for item in (reference, experiment)
+                                 if (item.path / 'recalibration.json').exists()), None)
+            other = experiment if recalibrated is reference else reference
+            if recalibrated is None:
+                raise ValueError('Ablation metric source mismatch without repair record')
+            provenance = _read_json(recalibrated.path / 'recalibration.json')
+            if provenance.get('metrics_source_sha256') != other.config['source_sha256']['metrics.py']:
+                raise ValueError('Ablation metric repair source mismatch')
         for left, right, lr, rr in zip(reference.predictions, experiment.predictions,
                                        reference.reports, experiment.reports):
             for key in ('train_indices', 'test_indices', 'train_names', 'test_names', 'target'):
@@ -211,7 +224,7 @@ def _distribution(experiments: list[Experiment], output: Path, mode: str, scope:
         ax.set_title('Lower is better' if metric == 'rmse' else 'Higher is better')
         ax.grid(axis='y', alpha=0.2)
     fig.suptitle(f'{scope} | {mode}\nBoxes: median/IQR, whiskers: 1.5 IQR; diamonds: mean +/- SD (not CI)')
-    fig.supxlabel('One observation per random split; logistic mapping is test-set post-hoc. PWRC not implemented.')
+    fig.supxlabel('One observation per random split; logistic mapping is test-set post-hoc. PWRC is reported separately.')
     _save(fig, output, f'metrics_{mode}')
 
 
@@ -305,7 +318,7 @@ def generate_figures(paths: list[Path], output: Path, *, allow_debug: bool = Fal
         'status': 'complete', 'debug': allow_debug, 'completed_rounds': count,
         'diagnostic_round': round_index, 'matplotlib': matplotlib.__version__,
         'plot_source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        'limitations': ['PWRC not implemented; not complete Table II replication',
+        'limitations': ['PWRC is reported separately; not shown in these figures',
                         'Single-round diagnostics are not aggregate results',
                         'Error bars are population SD over splits, not confidence intervals',
                         'Logistic mapping uses test MOS for post-hoc reporting only'],

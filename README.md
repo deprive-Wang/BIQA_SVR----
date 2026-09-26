@@ -6,14 +6,30 @@
 
 ## 完成范围与后续工作
 
-当前已实现特征提取、训练评估和结果绘图入口；尚无可作为完整实验结论的正式结果。单轮开发验证只用于检查流程，不能作为论文复现结果引用，生成产物不纳入 Git。
+当前已完成 LIVEC 上 BCQI、BRISQUE、NIQE 三种方法的同划分 1000 轮比较，从保存的预测补算 PWRC，并完成低层、语义、拼接特征的同划分 1000 轮消融；结果与适用边界见 [实验报告.md](实验报告.md)。这不等于论文表 II、表 III、表 V 的精确复现。单轮开发验证只用于检查流程，不能作为正式结果引用，生成产物不纳入 Git。
 
-- 已实现：正式样本筛选与标签对齐、低层/语义特征提取、缓存一致性校验、训练集内部调参、模型保存、原始与 logistic 映射后四项指标、多轮均值汇总、单图原始分数推理、BRISQUE 基线提取及同划分显著性比较入口。
-- 已提供：1000 次随机划分入口，以及低层、语义、拼接三种特征的消融入口；入口可用不代表对应实验已经执行。
-- 尚未完成：PWRC 指标、1000 轮正式实验及消融结果，以及论文表 II 的完整基线方法集合。当前权重、预处理和数值选择以本项目记录的 Python 实现为准。
+- 已实现：正式样本筛选与标签对齐、低层/语义特征提取、缓存一致性校验、训练集内部调参、模型保存、原始与 logistic 映射后四项指标及另行补算的 PWRC、多轮均值汇总、单图原始分数推理，以及 BRISQUE、NIQE 基线提取和同划分显著性比较入口。
+- 已完成：BCQI 主实验、BRISQUE 与 NIQE 两种代表性基线的同划分 1000 轮比较，以及低层、语义、拼接三组特征的同划分 1000 轮消融。PWRC 依据文献 [66] 的公式从保存的预测中补算，单独保存在 `outputs/pwrc_1000.json`。
+- 尚未对齐：论文版本 BRISQUE 的逐轮训练/校准及表 III 原始检验协议。论文表 II 的其他基线方法不在当前三方法范围内。当前权重、预处理和数值选择以本项目记录的 Python 实现为准。
 - 不在当前范围：CID2013、跨数据库实验、网络微调。单图预测已提供命令行入口；当前仅输出原始 SVR 分数，不提供利用测试集 MOS 拟合的部署校准分数。
 
-后续顺序为：固定当前复现配置 → 在相同划分下运行主实验、消融和基线 → 补齐 PWRC → 汇总均值、有效轮数及与论文的差异。不要依据测试集表现挑选参数或随机种子。
+后续如扩展论文对齐，可核对基线训练与统计检验协议。不要依据测试集表现挑选参数或随机种子。
+
+三种方法在相同 1000 组测试划分上的五参数 logistic 映射后均值如下；五项指标的有效轮数均为 1000。PWRC 的来源是另行补算的 `outputs/pwrc_1000.json`。详细协议、论文原值和可比性限制见 [实验报告.md](实验报告.md)。
+
+| 方法 | SRCC ↑ | KRCC ↑ | PWRC ↑ | PLCC ↑ | RMSE ↓ | 原四指标结果文件 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| BCQI | 0.7332 | 0.5387 | 12.1695 | 0.7647 | 12.9927 | `outputs/svr_1000_logistic_fixed/summary.json` |
+| BRISQUE | 0.3143 | 0.2132 | 4.5410 | 0.3768 | 18.6894 | `outputs/compare_brisque.json` |
+| NIQE | 0.4502 | 0.3077 | 7.2645 | 0.5039 | 17.4238 | `outputs/compare_niqe.json` |
+
+同划分消融的映射后均值如下；四项指标均有 1000 个有效轮次。三组逐轮产物已通过划分、MOS、预测、协议与汇总一致性校验；图表及精确数值见 `outputs/figures_ablation/`。
+
+| 特征 | SRCC ↑ | KRCC ↑ | PLCC ↑ | RMSE ↓ | 结果目录 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 仅低层 | 0.5540 | 0.3830 | 0.5859 | 16.3484 | `outputs/svr_low_1000/` |
+| 仅语义 | 0.7147 | 0.5218 | 0.7466 | 13.4147 | `outputs/svr_semantic_1000/` |
+| 两者拼接 | 0.7332 | 0.5387 | 0.7647 | 12.9927 | `outputs/svr_1000_logistic_fixed/` |
 
 ## 代码入口
 
@@ -24,6 +40,7 @@
 | `semantic.py` / `extract_semantic.py` | 预训练 SqueezeNet 1000 维特征与拼接缓存（默认 CUDA） |
 | `train_svr.py` | 划分、训练内交叉验证、RBF SVR、消融和多轮产物保存（CPU） |
 | `metrics.py` | 四项质量指标和五参数 logistic 事后映射 |
+| `pwrc.py` | 读取保存的预测与分数，按文献公式补算三方法的逐轮 PWRC |
 | `plot_results.py` | 完成轮数与产物一致性检查、指标分布、固定轮次诊断、同划分消融图 |
 | `predict_image.py` | 使用可信的已保存模型，对单张原始 RGB 图像输出未经测试集 logistic 映射的 MOS 预测 |
 | `compare_baselines.py` | 提取 BRISQUE、NIQE 分数，与 BCQI 在同一测试图像上比较并做逐轮配对显著性检验 |
@@ -122,13 +139,13 @@ NPZ 使用 `allow_pickle=False` 即可读取，包含 `features`、`names`、`mo
 ```powershell
 # 单次端到端验证，929 张训练 / 233 张测试；输出目录必须尚不存在。
 & 'E:\Miniforge\envs\BIQA_SVR\python.exe' train_svr.py --output outputs/svr_seed42_new --seed 42
-# 多次划分入口；每轮独立调参，计算时间随重复次数增长。
+# 多次划分入口；现有 outputs/svr_1000 已完成，无需重复运行。
 & 'E:\Miniforge\envs\BIQA_SVR\python.exe' train_svr.py --output outputs/svr_1000 --repeats 1000 --seed 42 --jobs 2
 ```
 
 `--feature-set combined|low|semantic` 支持消融；相同 seed 与 repeats 产生相同图像划分。`--jobs` 控制内部交叉验证并行数，默认 1。重复实验默认只保存首轮模型，全部轮次均保存预测、划分及评估；需要每轮模型时显式指定 `--save-models all`，注意磁盘占用。
 
-例如在同一组划分下运行低层和语义消融（以下为待执行命令，不表示已完成）：
+本次低层和语义消融使用的命令如下，仅供复核；现有输出目录已存在，直接重跑会被拒绝。今后耗时训练由用户手动运行：
 
 ```powershell
 & 'E:\Miniforge\envs\BIQA_SVR\python.exe' train_svr.py --output outputs/svr_low_1000 --feature-set low --repeats 1000 --seed 42 --jobs 2
@@ -136,6 +153,8 @@ NPZ 使用 `allow_pickle=False` 即可读取，包含 `features`、`names`、`mo
 ```
 
 三个特征设置均从同一份完整拼接缓存选列，因此仅低层消融也需要先准备拼接缓存。固定其他参数并使用不同输出目录；不要覆盖已有实验。
+
+主实验的 38 轮事后 logistic 修复记录在 `outputs/svr_1000_logistic_fixed/recalibration.json`；因此主实验配置中 `metrics.py` 的原始源码哈希与新消融运行不同。`plot_results.py` 仅在修复记录明确指向新指标源码、训练源码及其余协议一致时接受该差异，仍逐轮核验图像划分、MOS、预测和映射参数。
 
 结果目录包含 `config.json`、每轮的 `metrics.json`、`predictions.npz`、`predictions.csv`，以及最终 `summary.json`。配置保存依赖版本、源码与缓存哈希、特征来源和所有随机种子；每轮保存内外层划分索引、图像名、候选参数的 CV 分数与 logistic 参数。仅最终汇总的 `status=complete` 表示全部请求轮次完成；异常中断时已完成轮次保留，不自动覆盖或续跑。
 
@@ -151,7 +170,7 @@ NPZ 使用 `allow_pickle=False` 即可读取，包含 `features`、`names`、`mo
 
 论文主实验为 80%/20% 随机划分、1000 次重复并报告均值。程序保存每轮种子和图像 ID；预处理参数与 SVR 超参数仅从训练集确定。小轮数用于调试，不能当作完整复现结果。
 
-主要指标为 SRCC、KRCC、PLCC、RMSE，表 II 另有 PWRC（当前未实现），因此不能宣称完整复现表 II。五参数 logistic 映射与原始预测分别保留；网络权重、数值约定和调参范围与作者实现尚未确认一致。后续开发约定见 [AGENTS.md](AGENTS.md)。
+主要指标为 SRCC、KRCC、PLCC、RMSE；表 II 的 PWRC 已从保存的逐轮预测另行补算，未修改旧实验产物。五参数 logistic 映射与原始预测分别保留；网络权重、数值约定和调参范围与作者实现尚未确认一致，不能宣称完整复现表 II。后续开发约定见 [AGENTS.md](AGENTS.md)。
 
 ## 单图质量预测
 
@@ -169,24 +188,35 @@ NPZ 使用 `allow_pickle=False` 即可读取，包含 `features`、`names`、`mo
 
 NIQE 使用 [scikit-video 1.3.0](https://github.com/scikit-video/scikit-video/releases/tag/v1.3.0) 的参考自然图像模型；该版本在 GitHub 发布，PyPI 的旧版 NIQE 实现不等价。输入为整张原始 RGB 图，经 Pillow 转成 8-bit 灰度后交给 `skvideo.measure.niqe`，不预先缩放。BRISQUE、NIQE 原始分数都是越低越好；保存的比较分数取负，以便同 BCQI 一起按“越高越好”计算相关系数。此处灰度转换等实现选择未证实与论文作者完全一致，不能将所得数值称为表 II 的精确复现。
 
+以下命令记录现有产物的生成方式；**输出文件已存在，不要直接重复执行**。需要重做时，应先核对配置与数据来源，再指定新的输出路径。
+
 ```powershell
-# 仅在缓存尚不存在时提取；输出文件不允许覆盖。
+# 首次提取时生成 BRISQUE 缓存。
 & 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py extract-brisque --output features/livec_brisque_piq_v1.npz --device cuda
-# 完成 1000 轮实验后，复用上述缓存进行正式比较。
-& 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py compare --run outputs/svr_1000_logistic_fixed --baseline features/livec_brisque_piq_v1.npz --output outputs/compare_brisque.json
 # NIQE 的轻量依赖单独安装；已经安装且版本一致时跳过。
 & 'E:\Miniforge\envs\BIQA_SVR\python.exe' -m pip install -r requirements-baselines.txt
 # 首次对 1162 张图各算一次 NIQE，输出不可覆盖。
 & 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py extract-niqe --output features/livec_niqe_skvideo_v1.npz
-# 先选已保存的前 50 组测试划分做初步比较；不重新训练 BCQI。
-& 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py compare --run outputs/svr_1000_logistic_fixed --baseline features/livec_niqe_skvideo_v1.npz --rounds 50 --allow-debug --output outputs/compare_niqe_50_debug.json
+# 两种正式基线分别复用 BCQI 保存的全部 1000 组测试划分。
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py compare --run outputs/svr_1000_logistic_fixed --baseline features/livec_brisque_piq_v1.npz --output outputs/compare_brisque.json
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' compare_baselines.py compare --run outputs/svr_1000_logistic_fixed --baseline features/livec_niqe_skvideo_v1.npz --output outputs/compare_niqe.json
 ```
 
-比较程序要求基线和 BCQI 使用同一份完整特征缓存、1162 个相同图像 ID、MOS 与图像哈希；每轮只取相同的 233 张测试图像。基线分数与 BCQI 一样分别报告原始和测试集事后 logistic 映射的四项指标。显著性检验使用**同一轮、同一图像**的映射后绝对残差做双侧配对 t 检验，多基线时对该轮 p 值做 Holm 校正，显著性水平为 0.05；各轮独立报告，不将重复出现的图像跨轮合并。论文只写了对预测残差作 t 检验，未说明配对形式和多重比较处理；本实现是明确记录的项目协议，不能宣称与表 III 的检验完全一致。某轮任一模型的 logistic 拟合失败时，该轮不做配对检验，并保留有效轮数。
+比较程序要求基线和 BCQI 使用同一份完整特征缓存、1162 个相同图像 ID、MOS 与图像哈希；每轮只取相同的 233 张测试图像。基线分数与 BCQI 一样分别报告原始和测试集事后 logistic 映射的四项指标。PWRC 的补算见下节。显著性检验使用**同一轮、同一图像**的映射后绝对残差做双侧配对 t 检验，多基线时对该轮 p 值做 Holm 校正，显著性水平为 0.05；各轮独立报告，不将重复出现的图像跨轮合并。论文只写了对预测残差作 t 检验，未说明配对形式和多重比较处理；本实现是明确记录的项目协议，不能宣称与表 III 的检验完全一致。某轮任一模型的 logistic 拟合失败时，该轮不做配对检验，并保留有效轮数。
 
-默认只接受完成 1000 轮的实验；少轮实验或使用 `--rounds N` 只比较前 N 组已保存的划分时，需添加 `--allow-debug`，报告会标记为调试结果。50 轮结果可用来判断方向和耗时，不能当作论文的 1000 轮均值。比较入口可一次接收多个符合相同 NPZ 字段和数据校验规则的基线档案；目前内置提取器为 BRISQUE 和 NIQE。两个基线均先对 1162 张图片各算一次分数，后续每轮只复用这份分数计算指标与显著性检验，因此不会重复做图像推理或训练。但每轮的事后 logistic 映射仍有计算时间。已有 BRISQUE 报告无需重算。
+默认只接受完成 1000 轮的实验；少轮实验或使用 `--rounds N` 只比较前 N 组已保存的划分时，需添加 `--allow-debug`，报告会标记为调试结果。历史 50 轮 NIQE 试跑保存在 `outputs/compare_niqe_50_debug.json`，其前 50 轮记录已与正式报告核对一致。比较入口可一次接收多个符合相同 NPZ 字段和数据校验规则的基线档案；目前内置提取器为 BRISQUE 和 NIQE。两个基线均先对 1162 张图片各算一次分数，后续每轮只复用这份分数计算指标与显著性检验，因此不会重复做图像推理或训练。但每轮的事后 logistic 映射仍有计算时间。
 
-本地已有的 BRISQUE 全量缓存可直接复用。若只需检查比较流程，可将上例的 `--run` 换为已完成的单轮实验目录，另外指定尚不存在的输出文件，并加上 `--allow-debug`；所得结果只用于调试，不作论文结论。
+本地已有的 BRISQUE、NIQE 全量缓存可直接复用。若只需检查比较流程，可将上例的 `--run` 换为已完成的单轮实验目录，另外指定尚不存在的输出文件，并加上 `--allow-debug`；所得结果只用于调试，不作论文结论。
+
+### PWRC 补算
+
+`pwrc.py` 依据 [PWRC 原论文](https://arxiv.org/pdf/1705.05126) 的式 (9)、(13)～(15)、(19) 计算感知阈值曲线下面积。它使用 1162 张 LIVEC 图像的 MOS 范围和主观评分标准差确定归一化与阈值范围；本数据算得阈值为 15.1796～64.2450，与该文献的 ChallengeDB 参数表一致。按原文取激活斜率 0.175，采用积分的解析形式；并列分数采用平均秩。每轮只读取已保存的 BCQI 预测、BRISQUE/NIQE 分数及 logistic 参数，校验测试图像、MOS 与原四项指标后，分别对原始和映射后分数补算 PWRC，不重新训练或拟合。
+
+```powershell
+& 'E:\Miniforge\envs\BIQA_SVR\python.exe' pwrc.py --output outputs/pwrc_1000.json
+```
+
+该输出已存在；重做时须指定新文件名。`outputs/pwrc_1000.json` 保存逐轮值、均值、有效轮次、阈值与来源哈希。它是本项目对文献公式的实现，不能把数值差异单独归因于 BCQI 模型。
 
 开发测试使用项目环境中的 `pytest`，新环境可先按测试依赖清单安装，再运行已有的基线比较与单图推理测试：
 
@@ -197,9 +227,9 @@ NIQE 使用 [scikit-video 1.3.0](https://github.com/scikit-video/scikit-video/re
 
 ## 实验结果绘图
 
-`plot_results.py` 只读取已有实验产物，不训练模型、不重新拟合 logistic，不加载 `model.pkl`。默认要求请求并完成 1000 轮，验证每轮 929/233 划分、图像 ID、MOS、保存的映射参数、预测与指标以及汇总一致性。完成 1000 轮仅表示满足重复次数要求，不代表已完成作者实现对齐或 PWRC。
+`plot_results.py` 只读取已有实验产物，不训练模型、不重新拟合 logistic，不加载 `model.pkl`。默认要求请求并完成 1000 轮，验证每轮 929/233 划分、图像 ID、MOS、保存的映射参数、预测与指标以及汇总一致性。完成 1000 轮仅表示满足重复次数要求，不代表已完成作者实现对齐。
 
-绘图命令示例（绘图尚未执行）：
+绘图命令如下；三组消融图已生成在 `outputs/figures_ablation/`，主实验单独绘图示例尚未执行：
 
 ```powershell
 & 'E:\Miniforge\envs\BIQA_SVR\python.exe' plot_results.py --runs outputs/svr_1000_logistic_fixed --output outputs/figures_main
